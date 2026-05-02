@@ -3,10 +3,43 @@ package main
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 	"goprfrontend/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"net/http"
+	"time"
 )
+
+var jwtKey = []byte("my_secret_key")
+
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+
+		authHeader := c.GetHeader("Authorization")
+
+		if authHeader == "" {
+			c.JSON(401, gin.H{"error": "No token provided"})
+			c.Abort()
+			return
+		}
+
+		tokenString := authHeader
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(401, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
 
 func main() {
 	dsn := "host=localhost user=postgres password=nurlan050 dbname=task_management_db port=5432 sslmode=disable"
@@ -20,11 +53,11 @@ func main() {
 
 	_ = db
 
-	db.AutoMigrate(&models.Task{})
+	db.AutoMigrate(&models.Task{}, &models.User{})
 
 	r := gin.Default()
 
-	r.POST("/tasks", func(c *gin.Context) {
+	r.POST("/tasks", AuthMiddleware(), func(c *gin.Context) {
 		var task models.Task
 
 		if err := c.BindJSON(&task); err != nil {
@@ -137,6 +170,53 @@ func main() {
 
 		c.JSON(200, gin.H{
 			"message": "All done tasks deleted",
+		})
+	})
+
+	r.POST("/register", func(c *gin.Context) {
+		var user models.User
+
+		if err := c.ShouldBindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(user.Password), 14)
+		user.Password = string(hashedPassword)
+
+		db.Create(&user)
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "User registered successfully",
+		})
+	})
+
+	r.POST("/login", func(c *gin.Context) {
+		var input models.User
+		var user models.User
+
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		db.Where("email = ?", input.Email).First(&user)
+
+		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password))
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid credentials"})
+			return
+		}
+
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"user_id": user.ID,
+			"exp":     time.Now().Add(time.Hour * 24).Unix(),
+		})
+
+		tokenString, _ := token.SignedString(jwtKey)
+
+		c.JSON(200, gin.H{
+			"token": tokenString,
 		})
 	})
 
