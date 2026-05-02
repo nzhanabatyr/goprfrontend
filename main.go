@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/go-resty/resty/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"goprfrontend/models"
@@ -53,8 +54,6 @@ func main() {
 	fmt.Println("✅ Connected to PostgreSQL!")
 
 	_ = db
-
-	db.AutoMigrate(&models.Task{}, &models.User{}, &models.FavoriteBook{}, &models.Book{})
 
 	r := gin.Default()
 
@@ -259,6 +258,20 @@ func main() {
 			Find(&books)
 
 		c.JSON(200, books)
+	})
+
+	r.GET("/external/todos", func(c *gin.Context) {
+		client := resty.New()
+
+		resp, err := client.R().
+			Get("https://jsonplaceholder.typicode.com/todos/1")
+
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.Data(200, "application/json", resp.Body())
 	})
 
 	r.Run(":8082")

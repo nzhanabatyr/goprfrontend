@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS favorite_books;
+DROP TABLE IF EXISTS books;
+DROP TABLE IF EXISTS users;
