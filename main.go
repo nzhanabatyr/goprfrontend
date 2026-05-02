@@ -9,29 +9,31 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 var jwtKey = []byte("my_secret_key")
 
+func parseID(id string) uint {
+	i, _ := strconv.Atoi(id)
+	return uint(i)
+}
+
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 
-		authHeader := c.GetHeader("Authorization")
+		tokenString := c.GetHeader("Authorization")
 
-		if authHeader == "" {
-			c.JSON(401, gin.H{"error": "No token provided"})
-			c.Abort()
-			return
-		}
-
-		tokenString := authHeader
-
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		token, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
 		})
 
-		if err != nil || !token.Valid {
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			userID := uint(claims["user_id"].(float64))
+
+			c.Set("user_id", userID)
+		} else {
 			c.JSON(401, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
@@ -40,7 +42,6 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
 func main() {
 	dsn := "host=localhost user=postgres password=nurlan050 dbname=task_management_db port=5432 sslmode=disable"
 
@@ -53,7 +54,7 @@ func main() {
 
 	_ = db
 
-	db.AutoMigrate(&models.Task{}, &models.User{})
+	db.AutoMigrate(&models.Task{}, &models.User{}, &models.FavoriteBook{}, &models.Book{})
 
 	r := gin.Default()
 
@@ -218,6 +219,46 @@ func main() {
 		c.JSON(200, gin.H{
 			"token": tokenString,
 		})
+	})
+
+	r.PUT("/books/:id/favorites", AuthMiddleware(), func(c *gin.Context) {
+		userID, _ := c.Get("user_id")
+		bookID := c.Param("id")
+
+		fav := models.FavoriteBook{
+			UserID: userID.(uint),
+		}
+
+		db.First(&models.Book{}, bookID) // просто проверка что книга есть
+
+		fav.BookID = uint(parseID(bookID))
+
+		db.Create(&fav)
+
+		c.JSON(200, gin.H{"message": "Added to favorites"})
+	})
+
+	r.DELETE("/books/:id/favorites", AuthMiddleware(), func(c *gin.Context) {
+		userID, _ := c.Get("user_id")
+		bookID := c.Param("id")
+
+		db.Where("user_id = ? AND book_id = ?", userID, bookID).
+			Delete(&models.FavoriteBook{})
+
+		c.JSON(200, gin.H{"message": "Removed from favorites"})
+	})
+
+	r.GET("/books/favorites", AuthMiddleware(), func(c *gin.Context) {
+		userID, _ := c.Get("user_id")
+
+		var books []models.Book
+
+		db.Table("books").
+			Joins("JOIN favorite_books ON favorite_books.book_id = books.id").
+			Where("favorite_books.user_id = ?", userID).
+			Find(&books)
+
+		c.JSON(200, books)
 	})
 
 	r.Run(":8082")
